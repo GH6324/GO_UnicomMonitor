@@ -26,9 +26,12 @@ for os in windows linux darwin freebsd; do
         fi
         # 编译程序
         cd "$rootPath/src"
-        go build -ldflags="-w -s" -trimpath -o "$outPath$os_$arch$exe_suffix"
+        outputFile="${outPath}${os}_${arch}${exe_suffix}"
+        go build -ldflags="-w -s" -trimpath -o "$outputFile"
         # 压缩文件
-        zip -j "$outPath$os_$arch$exe_suffix.zip" "$outPath$os_$arch$exe_suffix"
+        zip -j "${outputFile}.zip" "$outputFile"
+        # 压缩后删除原文件
+        rm "$outputFile"
     done
 done
 # 回到根目录
