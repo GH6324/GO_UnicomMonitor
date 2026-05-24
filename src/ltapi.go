@@ -27,8 +27,8 @@ type deviceInfo struct {
 	DeviceName string // 设备名称
 	ChannelNo  string // 通道号
 	Status     string // 在线状态
-	Region     string // 服务器区域 (如 vd-file-sh1-qcloud.wojiazongguan.cn:50443/cds)
-	RelayHost  string // 中继主机 (从 iplist[0] 获取)
+	Region     string // 服务器区域
+	RelayHost  string // 中继主机
 	RelayPort  string // 中继端口
 }
 
@@ -40,7 +40,7 @@ type relayInfo struct {
 
 // AutoConfig 完整流程: 刷新登录 → 获取设备列表 → 生成视频配置
 func AutoConfig(tokenOnline, mobile string) []Video {
-	FmtPrint("======== 自动发现设备 ========")
+	FmtPrint("获取账号中的摄像头设备...")
 
 	// 刷新 token_online 登录
 	privateToken, _, err := refreshToken(tokenOnline)
@@ -71,19 +71,17 @@ func AutoConfig(tokenOnline, mobile string) []Video {
 	}
 
 	// 获取设备列表并生成配置
-	FmtPrint("[5/5] 获取设备列表...")
 	devices := getDeviceList(cloudToken)
 	if len(devices) == 0 {
 		FmtPrint("未发现任何设备")
 		return nil
 	}
-	FmtPrint("发现 %d 个设备", len(devices))
 
 	var wsHost string
 	for _, dev := range devices {
 		if dev.Status == "available" && dev.Region != "" {
 			wsHost = dev.Region
-			FmtPrint("WebSocket 地址: %s", wsHost)
+			// FmtPrint("WebSocket 地址: %s", wsHost)
 			break
 		}
 	}
@@ -107,7 +105,7 @@ func AutoConfig(tokenOnline, mobile string) []Video {
 			continue
 		}
 		relayServer := fmt.Sprintf("%s:%s", dev.RelayHost, dev.RelayPort)
-		FmtPrint("设备 [%s] 中继: %s", dev.DeviceName, relayServer)
+		// FmtPrint("设备 [%s] 中继: %s", dev.DeviceName, relayServer)
 
 		videos = append(videos, Video{
 			Name:        dev.DeviceName,
@@ -119,10 +117,11 @@ func AutoConfig(tokenOnline, mobile string) []Video {
 			Token:       cloudToken,
 			RelayServer: relayServer,
 		})
-		FmtPrint("已配置: %s (id=%s)", dev.DeviceName, dev.DeviceId)
+		// FmtPrint("已配置: %s (id=%s)", dev.DeviceName, dev.DeviceId)
 	}
 
-	FmtPrint("======== 自动发现完成 (共%d个) ========", len(videos))
+	FmtPrint("账号中共有：%d台摄像头设备", len(videos))
+	FmtPrint("")
 	return videos
 }
 
