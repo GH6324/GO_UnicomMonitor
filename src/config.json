@@ -3,13 +3,7 @@
   "user": "root:root",
   "path": "./videos/",
   "sleep": 60,
-  "video": [
-    {
-      "wsHost": "vd-file-hnzz2-wcloud.wojiazongguan.cn:50443",
-      "paramMsg": "MT1234567890==",
-      "name": "客厅",
-      "size": 10,
-      "count": 10
-    }
-  ]
+  "mobile": "13800138000",
+  "token": "token",
+  "mode": "record"
 }
