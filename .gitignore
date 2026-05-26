@@ -1,0 +1,39 @@
+# 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 依赖与缓存
+vendor/
+
+# 测试与覆盖率
+*.test
+*.out
+coverage.txt
+
+# Build
+bin/
+out/
+build_output/
+
+# AI
+.claude/
+openspec/
+
+# IDE
+.idea/
+.vs/
+.vscode/
+*.swp
+*~
+
+# OS 生成文件
+Thumbs.db
+.DS_Store
+
+# 临时文件
+*.tmp
+*.log
+tmp/

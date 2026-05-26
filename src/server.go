@@ -17,7 +17,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
-	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph264"
+	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph265"
 )
 
 //go:embed static/*
@@ -135,14 +135,14 @@ func listFiles(dir string) ([]string, error) {
 
 // 每个设备的转发数据
 type forwardDevice struct {
-	video    Video
-	stream   *gortsplib.ServerStream
-	media    *description.Media
-	mu       sync.Mutex
-	ready    bool
-	sps, pps []byte
-	encoder  *rtph264.Encoder
-	tencoder *rtph264.Encoder
+	video          Video
+	stream         *gortsplib.ServerStream
+	media          *description.Media
+	mu             sync.Mutex
+	ready          bool
+	vps, sps, pps  []byte
+	encoder        *rtph265.Encoder
+	rtspAddr       string
 }
 
 var forwardDevices = map[string]*forwardDevice{}
@@ -160,14 +160,10 @@ func StartRtsp(config *Config, videos []Video) {
 	if !strings.HasPrefix(addr, ":") {
 		addr = ":" + addr
 	}
-	user, pass := "root", "root"
-	if parts := strings.SplitN(config.User, ":", 2); len(parts) == 2 {
-		user, pass = parts[0], parts[1]
-	}
 
 	// 初始化设备
 	for i := range videos {
-		fd := &forwardDevice{video: videos[i]}
+		fd := &forwardDevice{video: videos[i], rtspAddr: addr}
 		forwardMu.Lock()
 		forwardDevices[videos[i].Name] = fd
 		forwardMu.Unlock()
@@ -186,7 +182,7 @@ func StartRtsp(config *Config, videos []Video) {
 	}
 	defer server.Close()
 
-	FmtPrint(fmt.Sprintf("RTSP 服务: rtsp://%s:%s@%s/{设备名}", user, pass, addr))
+	// FmtPrint(fmt.Sprintf("RTSP 服务: rtsp://%s:%s@%s/{设备名}", user, pass, addr))
 
 	// 启动每个设备的 WebSocket 连接
 	for i := range videos {
@@ -214,7 +210,7 @@ func (h *rtspHandler) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*ba
 		return &base.Response{StatusCode: base.StatusNotFound}, nil, nil
 	}
 
-	FmtPrint("RTSP DESCRIBE: %s", path)
+	// FmtPrint("RTSP DESCRIBE: %s", path)
 	return &base.Response{StatusCode: base.StatusOK}, fd.stream, nil
 }
 
@@ -235,21 +231,20 @@ func (h *rtspHandler) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Res
 
 // OnPlay 处理 RTSP PLAY 请求
 func (h *rtspHandler) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
-	path, _ := url.QueryUnescape(strings.TrimPrefix(ctx.Path, "/"))
-	FmtPrint("RTSP PLAY: %s", path)
+	// FmtPrint("RTSP PLAY: %s", path)
 	return &base.Response{StatusCode: base.StatusOK}, nil
 }
 
 // createStream 创建 gortsplib ServerStream
-func createStream(server *gortsplib.Server, fd *forwardDevice, video *Video) {
+func createStream(server *gortsplib.Server, fd *forwardDevice, video *Video, rtspAddr string) {
 	desc := &description.Session{
 		Medias: []*description.Media{{
 			Type: description.MediaTypeVideo,
-			Formats: []format.Format{&format.H264{
-				PayloadTyp:        96,
-				PacketizationMode: 1,
-				SPS:               fd.sps,
-				PPS:               fd.pps,
+			Formats: []format.Format{&format.H265{
+				PayloadTyp: 96,
+				VPS:        fd.vps,
+				SPS:        fd.sps,
+				PPS:        fd.pps,
 			}},
 		}},
 	}
@@ -259,10 +254,10 @@ func createStream(server *gortsplib.Server, fd *forwardDevice, video *Video) {
 		Desc:   desc,
 	}
 	if err := stream.Initialize(); err != nil {
-		FmtPrint(video.Name+" 创建流失败: %v", err)
+		FmtPrint("[%s]创建流失败: %v", video.Name, err)
 		return
 	}
 	fd.stream = stream
 	fd.media = desc.Medias[0]
-	FmtPrint(video.Name + " RTSP 流已就绪")
+	FmtPrint("[%s]转发地址：rtsp://localhost%s/%s", video.Name, rtspAddr, video.Name)
 }

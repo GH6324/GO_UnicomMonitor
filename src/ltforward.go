@@ -8,31 +8,27 @@ import (
 	"time"
 
 	"github.com/bluenviron/gortsplib/v5"
-	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph264"
+	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph265"
 	"github.com/gorilla/websocket"
 )
 
-// encoder 从 rtspHandler 的 OnPlay 回调中创建
-
-// runForwardStream WebSocket 连接循环，创建 stream 后开始转发
 func runForwardStream(server *gortsplib.Server, video *Video, fd *forwardDevice) {
-	fd.encoder = &rtph264.Encoder{PayloadType: 96}
+	fd.encoder = &rtph265.Encoder{PayloadType: 96}
 	fd.encoder.Init()
 
 	for {
 		forwardLoopWithStream(server, video, fd)
-		FmtPrint(video.Name + " 转发断开，3秒后重连")
+		FmtPrint("[%s]转发断开，3秒后重连", video.Name)
 		time.Sleep(3 * time.Second)
 	}
 }
 
-// forwardLoopWithStream 单次 WebSocket 连接，接收并处理数据
 func forwardLoopWithStream(server *gortsplib.Server, video *Video, fd *forwardDevice) {
 	uri := url.URL{Scheme: "wss", Host: video.WsHost, Path: "/h5player/live"}
 	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	conn, _, err := dialer.Dial(uri.String(), nil)
 	if err != nil {
-		FmtPrint(video.Name+" 转发连接失败: %v", err)
+		FmtPrint("[%s]转发连接失败: %v", video.Name, err)
 		return
 	}
 	defer conn.Close()
@@ -41,160 +37,217 @@ func forwardLoopWithStream(server *gortsplib.Server, video *Video, fd *forwardDe
 	if err := conn.WriteMessage(websocket.TextMessage, []byte("_paramStr_="+paramMsg)); err != nil {
 		return
 	}
-	FmtPrint(video.Name + " 转发已连接")
+	FmtPrint("[%s]转发已连接", video.Name)
 
-	started := false
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			return
 		}
-		if len(data) <= 10 {
+		if len(data) <= 1 {
 			continue
 		}
 
-		// 尝试解密为 _paramStr_ 控制消息
-		plain := DecryptParam(string(data))
-		if len(plain) > 0 && plain[0] == '{' {
-			handleControlMsg(plain, fd, server, video)
+		// 跳过 FLV 头消息
+		if len(data) > 4 && data[1] == 'F' && data[2] == 'L' && data[3] == 'V' {
 			continue
 		}
 
-		// FLV 二进制数据
-		if !started {
-			idx := bytes.Index(data, []byte("FLV"))
-			if idx < 0 {
-				continue
-			}
-			data = data[idx+13:] // 跳过 FLV 头(9) + PreviousTagSize(4)
-			started = true
-			FmtPrint(video.Name + " 收到FLV头")
+		// 在前 300 字节内查找 URL 编码的 JSON
+		limit := len(data)
+		if limit > 300 {
+			limit = 300
+		}
+		jsonStart := bytes.Index(data[:limit], []byte("%7B"))
+		if jsonStart < 0 {
+			continue
 		}
 
-		parseAndForward(data, fd, server, video)
+		jsonEnd := bytes.Index(data[jsonStart:], []byte("%7D"))
+		if jsonEnd < 0 {
+			continue
+		}
+		jsonEndAbs := jsonStart + jsonEnd + 3
+
+		// URL 解码 JSON
+		jsonStr := jsUnescape(string(data[jsonStart:jsonEndAbs]))
+		if len(jsonStr) == 0 || jsonStr[0] != '{' {
+			continue
+		}
+
+		// 解析 JSON
+		var msg map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
+			continue
+		}
+
+		// 处理 videoSPS 消息 (type 字段或 cmd 字段)
+		if msg["type"] == "videoSPS" {
+			handleVideoSPS(msg, fd, server, video)
+			continue
+		}
+
+		// 处理 sync 或 cmd 消息 - JSON 后面跟视频数据
+		if _, hasSync := msg["sync"]; hasSync {
+			// sync=1 表示视频帧
+			videoData := data[jsonEndAbs:]
+			if len(videoData) > 10 {
+				forwardHEVCData(videoData, fd, server, video)
+			}
+			continue
+		}
+
+		// 处理 cmd=1 (配置消息，带 videoEncodeType)
+		if cmd, ok := msg["cmd"].(float64); ok && cmd == 1 {
+			dataObj, _ := msg["data"].(map[string]interface{})
+			if dataObj != nil {
+				if videoType, ok := dataObj["videoEncodeType"].(float64); ok {
+					if videoType == 1 {
+						// FmtPrint("[%s]检测到 HEVC (H.265) 编码", video.Name)
+					}
+				}
+			}
+		}
 	}
 }
 
-// handleControlMsg 处理加密的控制消息 (videoSPS 等)
-func handleControlMsg(plain string, fd *forwardDevice, server *gortsplib.Server, video *Video) {
-	var msg map[string]interface{}
-	if err := json.Unmarshal([]byte(plain), &msg); err != nil {
+// handleVideoSPS 处理 videoSPS 消息，提取 SPS 数据
+func handleVideoSPS(msg map[string]interface{}, fd *forwardDevice, server *gortsplib.Server, video *Video) {
+	dataObj, _ := msg["data"].(map[string]interface{})
+	if dataObj == nil {
 		return
 	}
 
-	msgType, _ := msg["type"].(string)
-	switch msgType {
-	case "videoSPS":
-		// 提取 SPS/PPS 创建流
-		if dataObj, ok := msg["data"].(map[string]interface{}); ok {
-			if dataArr, ok := dataObj["data"].([]interface{}); ok {
-				bytes := make([]byte, len(dataArr))
-				for i, v := range dataArr {
-					if n, ok := v.(float64); ok {
-						bytes[i] = byte(n)
-					}
-				}
-				sps, pps := extractSPSPPS(bytes)
-				if len(sps) > 0 && len(pps) > 0 {
-					fd.mu.Lock()
-					if !fd.ready {
-						fd.sps = sps
-						fd.pps = pps
-						createStream(server, fd, video)
-						fd.ready = true
-					}
-					fd.mu.Unlock()
-				}
-			}
-		}
-	}
-}
-
-// parseAndForward 解析 FLV 并转发到 RTSP
-func parseAndForward(data []byte, fd *forwardDevice, server *gortsplib.Server, video *Video) {
-	offset := 0
-	for offset+11 <= len(data) {
-		tagType := data[offset]
-		dataSize := int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
-		tagEnd := offset + 11 + dataSize
-		if tagEnd > len(data) {
-			break
-		}
-
-		if tagType == 9 && dataSize > 5 {
-			videoData := data[offset+11 : tagEnd]
-			codecID := videoData[0] & 0x0F
-			avcPacketType := videoData[1]
-
-			if codecID == 7 && avcPacketType == 0 {
-				// AVC sequence header → 获取 SPS/PPS
-				sps, pps := extractSPSPPS(videoData[5:])
-				if len(sps) > 0 && len(pps) > 0 {
-					fd.mu.Lock()
-					if !fd.ready {
-						fd.sps = sps
-						fd.pps = pps
-						createStream(server, fd, video)
-						fd.ready = true
-					}
-					fd.mu.Unlock()
-
-					// 发送 SPS/PPS RTP 包
-					pkts, _ := fd.encoder.Encode([][]byte{sps, pps})
-					for _, pkt := range pkts {
-						fd.stream.WritePacketRTP(fd.media, pkt)
-					}
-				}
-			} else if codecID == 7 && avcPacketType == 1 && fd.ready {
-				// H.264 NAL 数据
-				nalData := videoData[5:]
-				nalOffset := 0
-				for nalOffset+4 <= len(nalData) {
-					nalLen := int(nalData[nalOffset])<<24 | int(nalData[nalOffset+1])<<16 |
-						int(nalData[nalOffset+2])<<8 | int(nalData[nalOffset+3])
-					nalOffset += 4
-					if nalOffset+nalLen <= len(nalData) {
-						pkts, _ := fd.encoder.Encode([][]byte{nalData[nalOffset : nalOffset+nalLen]})
-						for _, pkt := range pkts {
-							fd.stream.WritePacketRTP(fd.media, pkt)
-						}
-						nalOffset += nalLen
-					} else {
-						break
-					}
-				}
-			}
-		}
-		offset = tagEnd + 4
-	}
-}
-
-// extractSPSPPS 从 AVCDecoderConfigurationRecord 提取 SPS/PPS
-func extractSPSPPS(data []byte) (sps, pps []byte) {
-	if len(data) < 7 {
+	dataArr, _ := dataObj["data"].([]interface{})
+	if len(dataArr) == 0 {
 		return
 	}
-	numSPS := int(data[5] & 0x1F)
-	pos := 6
-	for j := 0; j < numSPS && pos+2 <= len(data); j++ {
-		spsLen := int(data[pos])<<8 | int(data[pos+1])
-		pos += 2
-		if pos+spsLen <= len(data) {
-			sps = data[pos : pos+spsLen]
-			pos += spsLen
+
+	// 将数组转换为字节 (SPS NALU)
+	spsData := make([]byte, len(dataArr))
+	for i, v := range dataArr {
+		if n, ok := v.(float64); ok {
+			spsData[i] = byte(n)
 		}
 	}
-	if pos+1 <= len(data) {
-		numPPS := int(data[pos])
-		pos++
-		for j := 0; j < numPPS && pos+2 <= len(data); j++ {
-			ppsLen := int(data[pos])<<8 | int(data[pos+1])
-			pos += 2
-			if pos+ppsLen <= len(data) {
-				pps = data[pos : pos+ppsLen]
-				pos += ppsLen
+
+	fd.mu.Lock()
+	if len(spsData) > 2 && len(fd.vps) > 0 && len(fd.pps) > 0 {
+		fd.sps = spsData
+		// 如果已经有 VPS 和 PPS，创建流
+		if !fd.ready {
+			createStream(server, fd, video, fd.rtspAddr)
+			fd.ready = true
+		}
+	}
+	fd.mu.Unlock()
+}
+
+// forwardHEVCData 从 Annex B 格式数据中提取 NAL 单元并转发
+func forwardHEVCData(data []byte, fd *forwardDevice, server *gortsplib.Server, video *Video) {
+	// 提取 Annex B NAL 单元
+	nalus := extractAnnexBNalus(data)
+	if len(nalus) == 0 {
+		return
+	}
+
+	var accessUnit [][]byte
+	fd.mu.Lock()
+
+	for _, nalu := range nalus {
+		if len(nalu) < 2 {
+			continue
+		}
+
+		// HEVC NALU 类型: (byte0 >> 1) & 0x3F
+		// 32=VPS, 33=SPS, 34=PPS, 39/40=SEI, 1=IDR_W_RADL, 19=IDR_W_RPSL, others=slice
+		nalType := (nalu[0] >> 1) & 0x3F
+
+		switch nalType {
+		case 32: // VPS
+			fd.vps = nalu
+		case 33: // SPS
+			fd.sps = nalu
+		case 34: // PPS
+			fd.pps = nalu
+			accessUnit = append(accessUnit, nalu) // 发送 PPS
+		case 39, 40: // SEI
+			accessUnit = append(accessUnit, nalu)
+		case 1, 19, 20, 21: // VCL NAL 单元 (slice, IDR)
+			accessUnit = append(accessUnit, nalu)
+		}
+	}
+
+	// 检查是否需要创建流
+	if !fd.ready && len(fd.vps) > 0 && len(fd.sps) > 0 && len(fd.pps) > 0 {
+		FmtPrint("[%s]已获取 VPS/SPS/PPS，创建 RTSP 流", video.Name)
+		createStream(server, fd, video, fd.rtspAddr)
+		fd.ready = true
+	}
+
+	// 如果流已创建，先发送 VPS/SPS/PPS，再发送帧数据
+	if fd.ready {
+		// 发送参数集
+		if len(fd.vps) > 0 {
+			pkts, _ := fd.encoder.Encode([][]byte{fd.vps})
+			for _, pkt := range pkts {
+				fd.stream.WritePacketRTP(fd.media, pkt)
+			}
+		}
+		if len(fd.sps) > 0 {
+			pkts, _ := fd.encoder.Encode([][]byte{fd.sps})
+			for _, pkt := range pkts {
+				fd.stream.WritePacketRTP(fd.media, pkt)
+			}
+		}
+		if len(fd.pps) > 0 {
+			pkts, _ := fd.encoder.Encode([][]byte{fd.pps})
+			for _, pkt := range pkts {
+				fd.stream.WritePacketRTP(fd.media, pkt)
 			}
 		}
 	}
-	return
+
+	fd.mu.Unlock()
+
+	// 发送访问单元 (VCL NAL 单元)
+	if fd.ready && len(accessUnit) > 0 {
+		pkts, _ := fd.encoder.Encode(accessUnit)
+		for _, pkt := range pkts {
+			fd.stream.WritePacketRTP(fd.media, pkt)
+		}
+	}
 }
+
+// extractAnnexBNalus 从 Annex B 格式数据中提取 NAL 单元列表
+func extractAnnexBNalus(data []byte) [][]byte {
+	var nalus [][]byte
+	startCode := []byte{0, 0, 0, 1}
+
+	i := 0
+	for i < len(data)-4 {
+		if bytes.HasPrefix(data[i:], startCode) {
+			naluStart := i + 4
+
+			// 查找下一个 start code
+			nextStart := bytes.Index(data[naluStart:], startCode)
+			var naluEnd int
+			if nextStart < 0 {
+				naluEnd = len(data)
+			} else {
+				naluEnd = naluStart + nextStart
+			}
+
+			if naluEnd > naluStart && naluEnd-naluStart >= 2 {
+				nalus = append(nalus, data[naluStart:naluEnd])
+			}
+
+			i = naluEnd
+		} else {
+			i++
+		}
+	}
+
+	return nalus
+}
+
