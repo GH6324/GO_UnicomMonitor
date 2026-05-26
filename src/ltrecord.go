@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -51,8 +52,11 @@ func linkServer(video *Video) []byte {
 			InsecureSkipVerify: true,
 		},
 	}
+	// 请求头
+	headers := http.Header{}
+	headers.Set("User-Agent", "ChinaUnicom/12.1200 (Android 16)")
 	// 发起连接
-	conn, _, err := dialer.Dial(uri.String(), nil)
+	conn, _, err := dialer.Dial(uri.String(), headers)
 	if err != nil {
 		FmtPrint(video.Name+" 无法连接: %v", err)
 		return bytes

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -18,26 +19,42 @@ func runForwardStream(server *gortsplib.Server, video *Video, fd *forwardDevice)
 
 	for {
 		forwardLoopWithStream(server, video, fd)
-		FmtPrint("[%s]转发断开，3秒后重连", video.Name)
+		FmtPrint(video.Name + " 连接断开，稍后重连")
 		time.Sleep(3 * time.Second)
 	}
 }
 
 func forwardLoopWithStream(server *gortsplib.Server, video *Video, fd *forwardDevice) {
-	uri := url.URL{Scheme: "wss", Host: video.WsHost, Path: "/h5player/live"}
-	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-	conn, _, err := dialer.Dial(uri.String(), nil)
+	uri := url.URL{
+		Scheme: "wss",
+		Host:   video.WsHost,
+		Path:   "/h5player/live",
+	}
+	// 跳过证书验证
+	dialer := websocket.Dialer{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+	}
+	// 请求头
+	headers := http.Header{}
+	headers.Set("User-Agent", "ChinaUnicom/12.1200 (Android 16)")
+	// 发起连接
+	conn, _, err := dialer.Dial(uri.String(), headers)
 	if err != nil {
-		FmtPrint("[%s]转发连接失败: %v", video.Name, err)
+		FmtPrint(video.Name+" 无法连接: %v", err)
 		return
 	}
 	defer conn.Close()
 
 	paramMsg := BuildParamMsg(video.Token, video.DeviceId, video.ChannelNo, video.RelayServer, video.Name)
-	if err := conn.WriteMessage(websocket.TextMessage, []byte("_paramStr_="+paramMsg)); err != nil {
+	message := "_paramStr_=" + paramMsg
+	err = conn.WriteMessage(websocket.TextMessage, []byte(message))
+	if err != nil {
+		FmtPrint(video.Name+" 发送消息失败: %v", err)
 		return
 	}
-	FmtPrint("[%s]转发已连接", video.Name)
+	FmtPrint(video.Name + " 已连接，开始转发")
 
 	for {
 		_, data, err := conn.ReadMessage()
@@ -180,7 +197,7 @@ func forwardHEVCData(data []byte, fd *forwardDevice, server *gortsplib.Server, v
 
 	// 检查是否需要创建流
 	if !fd.ready && len(fd.vps) > 0 && len(fd.sps) > 0 && len(fd.pps) > 0 {
-		FmtPrint("[%s]已获取 VPS/SPS/PPS，创建 RTSP 流", video.Name)
+		FmtPrint(video.Name + " 已获取 VPS/SPS/PPS，创建 RTSP 流")
 		createStream(server, fd, video, fd.rtspAddr)
 		fd.ready = true
 	}
@@ -250,4 +267,3 @@ func extractAnnexBNalus(data []byte) [][]byte {
 
 	return nalus
 }
-

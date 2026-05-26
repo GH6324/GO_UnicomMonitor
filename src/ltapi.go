@@ -108,7 +108,7 @@ func AutoConfig(tokenOnline, mobile string) []Video {
 		// FmtPrint("设备 [%s] 中继: %s", dev.DeviceName, relayServer)
 
 		videos = append(videos, Video{
-			Name:        dev.DeviceName,
+			Name:        strings.ReplaceAll(dev.DeviceName, " ", ""),
 			Size:        10,
 			Count:       10,
 			WsHost:      dev.Region,

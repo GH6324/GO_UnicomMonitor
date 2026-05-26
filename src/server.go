@@ -254,10 +254,10 @@ func createStream(server *gortsplib.Server, fd *forwardDevice, video *Video, rts
 		Desc:   desc,
 	}
 	if err := stream.Initialize(); err != nil {
-		FmtPrint("[%s]创建流失败: %v", video.Name, err)
+		FmtPrint(video.Name+" 创建流失败: %v", err)
 		return
 	}
 	fd.stream = stream
 	fd.media = desc.Medias[0]
-	FmtPrint("[%s]转发地址：rtsp://localhost%s/%s", video.Name, rtspAddr, video.Name)
+	FmtPrint(video.Name+" 转发地址：rtsp://localhost%s/%s", rtspAddr, video.Name)
 }
