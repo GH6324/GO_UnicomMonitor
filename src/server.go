@@ -165,7 +165,7 @@ func StartRtsp(config *Config, videos []Video) {
 	for i := range videos {
 		fd := &forwardDevice{video: videos[i], rtspAddr: addr}
 		forwardMu.Lock()
-		forwardDevices[videos[i].Name] = fd
+		forwardDevices[videos[i].DeviceId] = fd
 		forwardMu.Unlock()
 	}
 
@@ -188,7 +188,7 @@ func StartRtsp(config *Config, videos []Video) {
 	for i := range videos {
 		go func(v *Video) {
 			forwardMu.RLock()
-			fd := forwardDevices[v.Name]
+			fd := forwardDevices[v.DeviceId]
 			forwardMu.RUnlock()
 			runForwardStream(server, v, fd)
 		}(&videos[i])
@@ -259,5 +259,5 @@ func createStream(server *gortsplib.Server, fd *forwardDevice, video *Video, rts
 	}
 	fd.stream = stream
 	fd.media = desc.Medias[0]
-	FmtPrint(video.Name+" 转发地址：rtsp://localhost%s/%s", rtspAddr, video.Name)
+	FmtPrint(video.Name+" 转发地址：rtsp://localhost%s/%s", rtspAddr, video.DeviceId)
 }

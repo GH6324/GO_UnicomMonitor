@@ -64,8 +64,9 @@ func linkServer(video *Video) []byte {
 	defer conn.Close()
 
 	// 发送消息
-	paramMsg := BuildParamMsg(video.Token, video.DeviceId, video.ChannelNo, video.RelayServer, video.Name)
+	paramMsg := BuildParamMsg(video.Token, video.DeviceId, video.ChannelNo, video.ShareId, video.RelayServer, video.Name)
 	message := "_paramStr_=" + paramMsg
+	// FmtPrint(DecryptParam(paramMsg))
 	err = conn.WriteMessage(websocket.TextMessage, []byte(message))
 	if err != nil {
 		FmtPrint(video.Name+" 发送消息失败: %v", err)

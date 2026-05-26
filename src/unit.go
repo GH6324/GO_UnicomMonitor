@@ -27,6 +27,7 @@ type Video struct {
 	WsHost      string `json:"wsHost"`      // 连接地址
 	DeviceId    string `json:"deviceId"`    // 设备ID
 	ChannelNo   string `json:"channelNo"`   // 通道号
+	ShareId     string `json:"shareId"`     // 分享ID
 	Token       string `json:"token"`       // 视频云 token
 	RelayServer string `json:"relayServer"` // 中继服务器
 }

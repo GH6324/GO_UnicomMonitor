@@ -19,7 +19,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o main .
 # 使用轻量级的 alpine 作为运行阶段
 FROM alpine:latest
 
-# 镜像信息
+# 安装时区数据并设置上海时区
+RUN apk add --no-cache tzdata && \
+    cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone
 ENV TZ=Asia/Shanghai
 LABEL name=unicomMonitor
 LABEL url=https://github.com/zgcwkjOpenProject/GO_UnicomMonitor

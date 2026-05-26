@@ -26,6 +26,7 @@ type deviceInfo struct {
 	DeviceId   string // 设备ID
 	DeviceName string // 设备名称
 	ChannelNo  string // 通道号
+	ShareId    string // 分享ID
 	Status     string // 在线状态
 	Region     string // 服务器区域
 	RelayHost  string // 中继主机
@@ -108,12 +109,13 @@ func AutoConfig(tokenOnline, mobile string) []Video {
 		// FmtPrint("设备 [%s] 中继: %s", dev.DeviceName, relayServer)
 
 		videos = append(videos, Video{
-			Name:        strings.ReplaceAll(dev.DeviceName, " ", ""),
+			Name:        dev.DeviceName,
 			Size:        10,
 			Count:       10,
 			WsHost:      dev.Region,
 			DeviceId:    dev.DeviceId,
 			ChannelNo:   dev.ChannelNo,
+			ShareId:     dev.ShareId,
 			Token:       cloudToken,
 			RelayServer: relayServer,
 		})
@@ -350,6 +352,9 @@ func getDeviceList(token string) []deviceInfo {
 
 	data, _ := resp["data"].(map[string]interface{})
 	devicesRaw, _ := data["devicelist"].([]interface{})
+	// if j, e := json.MarshalIndent(resp, "", "  "); e == nil {
+	// 	FmtPrint("设备列表响应:\n%s", string(j))
+	// }
 
 	var devices []deviceInfo
 	for _, d := range devicesRaw {
@@ -369,6 +374,7 @@ func getDeviceList(token string) []deviceInfo {
 			DeviceId:   vdStr(dev, "deviceid"),
 			DeviceName: vdStr(dev, "devicename"),
 			ChannelNo:  vdStr(dev, "channelNo"),
+			ShareId:    vdStr(dev, "shareid"),
 			Status:     vdStr(dev, "onlineStatus"),
 			Region:     region,
 			RelayHost:  relayHost,
@@ -430,7 +436,7 @@ func getWsHost(token, deviceId string) string {
 }
 
 // BuildParamMsg 构建 WebSocket 连接时发送的 _paramStr_ 参数
-func BuildParamMsg(token, deviceId, channelNo, relayServer, deviceName string) string {
+func BuildParamMsg(token, deviceId, channelNo, shareId, relayServer, deviceName string) string {
 	payload := map[string]interface{}{
 		"requestTime":        fmt.Sprintf("%d", time.Now().UnixMilli()),
 		"productKey":         productKey,
@@ -443,7 +449,7 @@ func BuildParamMsg(token, deviceId, channelNo, relayServer, deviceName string) s
 		"channel":            channelName,
 		"deviceName":         deviceName,
 		"clientId":           "WEBCLIENT_H5_" + RandomDigits(22) + fmt.Sprintf("%d", time.Now().UnixMilli()),
-		"shareId":            "",
+		"shareId":            shareId,
 		"relayServer":        relayServer,
 		"isSDCardPlayback":   "false",
 		"preConnect":         "false",
